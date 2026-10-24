@@ -39,7 +39,22 @@
         </dict>
 
 
-        <!-- Totally optional if you want to customise the exit message in your own language, for instance -->
+        <!-- When the limit is reached, an alert is shown and the game is killed after this grace period -->
+        <!-- hour:minutes:seconds -->
+        <key>exitGraceTime</key>
+        <string>00:02:00</string>
+
+        <!-- Texts. Change these to use your own language. {seconds} is replaced by the grace period in seconds -->
+        <key>timeoutTitle</key>
+        <string>Time's up</string>
+        <key>timeoutMessage</key>
+        <string>Save and exit. The game will close in {seconds} seconds.</string>
+        <key>notificationTitle</key>
+        <string>Game Warden</string>
+        <key>killMessage</key>
+        <string>Time's up!</string>
+
+        <!-- Totally optional if you want to customise the warning message in your own language, for instance -->
         <!-- This might be moved to language resource files, potentially-->
         <!--<key>customExitMessage</key>-->
         <!--<string>Lagre og avslutt umiddelbart!</string>-->

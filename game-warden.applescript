@@ -92,12 +92,6 @@ on main()
 
     do shell script "mkdir -p " & quoted form of appDir
 
-    if not ensureAutomationPermissions() then
-        display dialog "You need to give access to 'System Events' in Settings > Privacy > Automation." buttons {"OK"} default button "OK"
-        error "Missing permission to access System Events"
-    end if
-
-
     set timeBookkeeping's startOfCurrentSession to missing value
     set patternRecords to readProcessPatterns(plistPath)
 
@@ -113,31 +107,37 @@ on main()
         end if
 
         traceLog("has shown warning: " & hasShownWarning)
-        tell application "System Events"
-            set frontApp to first process whose frontmost is true
-            set processId to unix id of frontApp
-            local appName
-            set appName to (get name of frontApp)
-            my traceLog("appName: " & appName)
-            my traceLog("pid: " & (get unix id of frontApp))
-            my traceLog("bundle: " & (get bundle identifier of frontApp))
-        end tell
+        -- lsappinfo talks to LaunchServices directly, so no Automation/Accessibility permission is needed
+        -- (unlike System Events). Output format: "pid"=1234
+        local appName
+        try
+            set processId to (do shell script "lsappinfo info -only pid $(lsappinfo front) | cut -d= -f2") as integer
+            set appName to do shell script "basename \"$(ps -p " & processId & " -o comm=)\""
+            traceLog("appName: " & appName)
+            traceLog("pid: " & processId)
+        on error err
+            -- e.g. no frontmost app (lsappinfo front returns "[ NULL ]")
+            debugLog("Could not determine frontmost app: " & err)
+            set processId to missing value
+        end try
 
-        debugLog("Checking for process pattern")
-        repeat with r in patternRecords
-            traceLog("Key: " & (key of r) & " -> Pattern: " & (pattern of r))
-            set pattern to pattern of r
+        if processId is not missing value then
+            debugLog("Checking for process pattern")
+            repeat with r in patternRecords
+                traceLog("Key: " & (key of r) & " -> Pattern: " & (pattern of r))
+                set pattern to pattern of r
 
-            -- If the shell exits with a non-zero code, it did not find the process
-            -- It will also throw an error, which we catch and ignore
-            try
-                do shell script "ps -f " & processId & " | grep -E " & quoted form of pattern
-                set activeProcessHasMatch to true
-                debugLog("Matched on process pattern: " & pattern)
-                set matchedProcess to {name: appName, pid: processId, patternKey: key of r, pattern: pattern of r}
-                exit repeat
-            end try
-        end repeat
+                -- If the shell exits with a non-zero code, it did not find the process
+                -- It will also throw an error, which we catch and ignore
+                try
+                    do shell script "ps -f " & processId & " | grep -E " & quoted form of pattern
+                    set activeProcessHasMatch to true
+                    debugLog("Matched on process pattern: " & pattern)
+                    set matchedProcess to {name: appName, pid: processId, patternKey: key of r, pattern: pattern of r}
+                    exit repeat
+                end try
+            end repeat
+        end if
 
         if not activeProcessHasMatch then
             if timeBookkeeping's startOfCurrentSession is not missing value then
@@ -168,7 +168,7 @@ on main()
                     infoLog("Killing the current process")
                     do shell script "kill " & processId
 
-                    displayNotification("Timeout!")
+                    displayNotification(configWithDefault("killMessage", "Time's up!"))
                 end try
             -- soft and graceful exit
             else if totalDailySeconds() > dailyUsageLimit or totalWeeklySeconds() > weeklyUsageLimit then
@@ -193,8 +193,6 @@ on showWarningIfCloseToThreshold()
         if totalDailySeconds() > (dailyUsageLimit - secondsBeforeWarning) or totalWeeklySeconds() > (weeklyUsageLimit - secondsBeforeWarning) then
             infoLog("showing warning")
             set hasShownWarning to true
-            tell application "Finder" to activate
-            delay 0.5
 
             # this is a non-blocking system message (typically displayed as a box appearing in the top-right corner)
             displayNotification(warnMessage)
@@ -208,7 +206,7 @@ on showWarningIfCloseToThreshold()
 end showWarningIfCloseToThreshold
 
 on displayNotification(msg)
-    display notification msg with title "Game Warden"
+    display notification msg with title configWithDefault("notificationTitle", "Game Warden")
 end displayNotification
 
 on readFileOrDefault(filePath, defaultValue)
@@ -230,7 +228,7 @@ on writeFile(textContent, filePath, append)
 end writeFile
 
 -- Turns out there already is a built-in log(%s) function ...
--- AppleScript is context sensitive, so you need to prefix with 'my ' from within a 'tell application' block
+-- AppleScript is context sensitive, so you need to prefix with 'my ' from within a 'tell' block
 -- (yes, AppleScript is weird)
 on doLog(textContent)
     set timestamp to do shell script "date +\"%Y-%m-%dT%H:%M:%S%z\""
@@ -273,10 +271,6 @@ on formatDate(aDate)
     return ((year of aDate) as string) & pad(month of aDate as integer) & pad(day of aDate)
 end formatDate
 
-on weekNumber(aDate)
-    return (do shell script "date -jf '%Y-%m-%d' '" & (year of aDate) & "-" & pad(month of aDate as integer) & "-" & pad(day of aDate) & "' '+%W'") as integer
-end weekNumber
-
 on configWithDefault(key, defaultValue)
     try
         return do shell script "/usr/libexec/PlistBuddy -c 'Print " & key & "' " & quoted form of plistPath
@@ -288,17 +282,18 @@ end configWithDefault
 
 on resetStateIfNewDayOrWeek()
     try
-        tell application "System Events" to set fileDate to modification date of file usageStateFile
-        set fileDateString to formatDate(fileDate)
+        set fileDateString to do shell script "stat -f %Sm -t %Y%m%d " & quoted form of usageStateFile
         set currentDateString to formatDate(current date)
         if fileDateString is not currentDateString then
             infoLog("Reset daily usage: " & fileDateString & " != " & currentDateString)
             set timeBookkeeping's dailySeconds to 0
             set timeBookkeeping's startOfCurrentSession to current date
             updateDailyUsageLimit()
+            -- reset the flag so that we can show the warning again
+            set hasShownWarning to false
         end if
 
-        set fileWeekNumber to weekNumber(fileDate)
+        set fileWeekNumber to (do shell script "stat -f %Sm -t %W " & quoted form of usageStateFile) as integer
         set currentWeekNumber to (do shell script "date +%W") as integer
         if fileWeekNumber is not currentWeekNumber then
             infoLog("Reset weekly usage: Week " & fileWeekNumber & " != " & currentWeekNumber)
@@ -312,11 +307,6 @@ end resetStateIfNewDayOrWeek
 on resetStateIfRequired()
     debugLog("Checking any state needs resetting")
     resetStateIfNewDayOrWeek()
-
-    if timeBookkeeping's weeklySeconds is 0 or timeBookkeeping's weeklySeconds is 0 then
-        -- reset the flag so that we can show it again
-        hasShownWarning = false
-    end if
 end resetStateIfRequired
 
 on saveTimeBookkeeping()
@@ -388,58 +378,37 @@ on processWithArgumentsMatchesPattern(pid, pattern)
 end processWithArgumentsMatchesPattern
 
 on gracefulExit(matchedProcess)
-    if patternKey of matchedProcess is "minecraft" then
-        infoLog("Gracefully exiting Minecraft")
-        gracefulExitMinecraft()
-    else
-        infoLog("Trying to gracefully exit by invoking Cmd-Q as general go-to")
-        tell application "System Events"
-            set targetProc to first process whose unix id is pid of matchedProcess
-            -- Send Command-Q only to this process
-            -- This will hopefully trigger some general exit code that flushes to disk
-            tell targetProc to keystroke "q" using {command down}
-        end tell
-    end if
+    set graceSeconds to timeToSeconds(configWithDefault("exitGraceTime", "00:02:00"))
+    set alertTitle to configWithDefault("timeoutTitle", "Time's up")
+    set alertText to configWithDefault("timeoutMessage", "Save and exit. The game will close in {seconds} seconds.")
+    set alertText to replaceText(alertText, "{seconds}", graceSeconds as text)
+
+    infoLog("Time is up. Showing exit alert for " & graceSeconds & " seconds")
+    set alertShownAt to current date
+    -- An alert from osascript itself needs no permissions, unlike sending keystrokes via System Events
+    activate
+    display alert alertTitle message alertText giving up after graceSeconds
+
+    -- Keep the promised grace period even if the alert was dismissed early,
+    -- then kill directly instead of relying on the game still being in the foreground
+    set remainingSeconds to graceSeconds - ((current date) - alertShownAt)
+    if remainingSeconds > 0 then delay remainingSeconds
+
+    try
+        infoLog("Killing " & (name of matchedProcess) & " (pid=" & (pid of matchedProcess) & ")")
+        do shell script "kill " & (pid of matchedProcess)
+        displayNotification(configWithDefault("killMessage", "Time's up!"))
+    end try
 end gracefulExit
 
-on gracefulExitMinecraft()
-
-    displayNotification("Timeout! Trying to exit gracefully")
-
-    tell application "System Events"
-
-        -- Assumption: play screen
-        key code 53 -- Escape
-        delay 0.2
-
-        repeat 5 times
-            key code 125 -- Arrow down
-            delay 0.1
-        end repeat
-
-        -- Save and go the main menu
-        key code 36 -- Enter
-        delay 0.5
-
-        -- If the assumption was wrong, and we were at the main screen
-        -- and now ended up at some sub-menu,
-        -- we can get back to the main screen by just tapping Esc again
-        key code 53 -- Escape
-        delay 0.2
-
-        -- Assumption: we are at main screen
-        repeat 3 times
-            key code 125 -- Arrow down
-            delay 0.1
-        end repeat
-
-        key code 124 -- Arrow right
-        delay 0.1
-
-        -- Quits!
-        key code 36 -- Enter
-    end tell
-end gracefulExitMinecraft
+on replaceText(theText, searchStr, replaceStr)
+    set AppleScript's text item delimiters to searchStr
+    set parts to text items of theText
+    set AppleScript's text item delimiters to replaceStr
+    set res to parts as text
+    set AppleScript's text item delimiters to ""
+    return res
+end replaceText
 
 on shouldQuit()
     set uninstallFlag to userData(".uninstall")
@@ -455,21 +424,6 @@ on shouldQuit()
     end try
     return false
 end shouldQuit
-
-on ensureAutomationPermissions()
-    traceLog("--> ensureAutomationPermissions")
-    try
-        tell application "System Events"
-            -- Utløser automatisk tillatelsesdialog om nødvendig
-            set _ to name of every process
-        end tell
-        infoLog("✅ System Events access granted.")
-        return true
-    on error errMsg number errNum
-        infoLog("❌ Failed to access System Events: " & errMsg & " (" & errNum & ")")
-        return false
-    end try
-end ensureAutomationPermissions
 
 -- Read the dictionary of key:pattern pairs
 -- Relies on 'use framework "Foundation"' to load it as an NSArray
