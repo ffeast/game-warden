@@ -246,18 +246,29 @@ on doLog(textContent)
 
 end log
 
+-- Usage can be negative ("-00:10:00") when extra time has been given (see extend-time.sh)
 on timeToSeconds(timeString)
+    set sign to 1
+    if timeString starts with "-" then
+        set sign to -1
+        set timeString to text 2 thru -1 of timeString
+    end if
     set AppleScript's text item delimiters to ":"
     set {hrs, mins, secs} to text items of timeString
     set AppleScript's text item delimiters to ""
-    return (hrs as integer) * 3600 + (mins as integer) * 60 + (secs as integer)
+    return sign * ((hrs as integer) * 3600 + (mins as integer) * 60 + (secs as integer))
 end timeToSeconds
 
 on secondsToTime(totalSecs)
+    set prefix to ""
+    if totalSecs < 0 then
+        set prefix to "-"
+        set totalSecs to -totalSecs
+    end if
     set hrs to totalSecs div 3600
     set mins to (totalSecs mod 3600) div 60
     set secs to totalSecs mod 60
-    return pad(hrs) & ":" & pad(mins) & ":" & pad(secs)
+    return prefix & pad(hrs) & ":" & pad(mins) & ":" & pad(secs)
 end secondsToTime
 
 on pad(num)

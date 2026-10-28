@@ -144,6 +144,17 @@ Enter remote sudo password:
 01:00:25,03:59:58
 ```
 
+## Giving extra time for today
+```bash
+$ sudo game-warden-extend-time johndoe 30
+📦 Adding 30 minutes of game time for johndoe ...
+✅ Usage today: 00:58:12 → 00:28:12, this week: 03:40:00 → 03:10:00
+```
+The minutes are subtracted from both the daily and the weekly usage, so the weekly limit does not stop the game early.
+You can give more time than has been played so far: the usage then becomes negative (e.g. `-00:10:00`).
+The extra time is for today only. After updating from an older version, re-run `./install.sh` first,
+since older versions of the agent can not read negative usage.
+
 ## Resetting the config or state without re-installing
 Just create the .uninstall flag to make the process quit
 ```bash

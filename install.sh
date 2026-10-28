@@ -133,6 +133,7 @@ EOF
 
     # Replace a previous link so rerunning the installer remains idempotent.
     sudo ln -sfn "$SCRIPT_DIR/reset-time.sh" /usr/local/bin/game-warden-reset-time
+    sudo ln -sfn "$SCRIPT_DIR/extend-time.sh" /usr/local/bin/game-warden-extend-time
 }
 
 main "$@"
